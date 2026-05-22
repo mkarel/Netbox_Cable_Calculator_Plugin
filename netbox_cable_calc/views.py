@@ -121,43 +121,70 @@ def _parse_rack_name(name):
     return None, None
 
 def _build_rack_index(cfg, site_id=None, location_id=None):
-    qs = Rack.objects.select_related("site", "location").order_by("name")
+    """Build rack index with layout data if available"""
+    qs = Rack.objects.select_related("site", "location").all()
     if site_id:
         qs = qs.filter(site_id=site_id)
     if location_id:
         qs = qs.filter(location_id=location_id)
 
+    # Try to load saved layout
+    layout_data = None
+    if site_id:
+        layout_path = _layout_path(site_id, location_id)
+        if os.path.exists(layout_path):
+            try:
+                with open(layout_path, 'r') as f:
+                    layout_file = json.load(f)
+                    layout_data = layout_file.get('layout', {})
+            except:
+                pass
+
     rack_list = []
     for rack in qs:
         width_in = _rack_width_in(rack, cfg)
-        row, pos = _parse_rack_name(rack.name)
+        
+        # Try to get row info from layout first
+        row = None
+        pos = 0
+        center_offset = 0.0
+        row_index = 0
+        
+        if layout_data and 'rackPositions' in layout_data:
+            rack_pos = layout_data['rackPositions'].get(str(rack.pk))
+            if rack_pos:
+                row_id = rack_pos.get('rowId')
+                pos = rack_pos.get('x', 0)
+                
+                # Find row_index from rows array
+                rows = layout_data.get('rows', [])
+                for idx, row_def in enumerate(rows):
+                    if row_def.get('id') == row_id:
+                        row = row_id
+                        row_index = idx
+                        center_offset = float(pos)
+                        break
+        
+        # Fallback to parsing rack name
+        if row is None:
+            parsed_row, parsed_pos = _parse_rack_name(rack.name)
+            row = parsed_row
+            pos = parsed_pos if parsed_pos else 0
+        
         rack_list.append({
             "id": rack.pk, "name": rack.name,
             "u_height": rack.u_height, "width_in": width_in,
             "row": row, "pos": pos,
-            "resolved": row is not None and pos is not None,
+            "resolved": row is not None,
             "site_id": rack.site_id,
             "site_name": rack.site.name if rack.site else "",
             "location_id": rack.location_id,
             "location_name": rack.location.name if rack.location else "",
-            "center_offset": 0.0, "row_index": 0,
+            "center_offset": center_offset, "row_index": row_index,
         })
 
-    by_row = {}
-    for r in rack_list:
-        if r["resolved"]:
-            by_row.setdefault(r["row"], []).append(r)
-
-    row_keys = sorted(by_row.keys(), key=lambda x: (len(x), x))
-    for idx, row_key in enumerate(row_keys):
-        group = sorted(by_row[row_key], key=lambda r: r["pos"])
-        offset = 0.0
-        for r in group:
-            r["center_offset"] = offset + r["width_in"] / 2
-            r["row_index"] = idx
-            offset += r["width_in"]
-
     return {r["id"]: r for r in rack_list}
+
 
 def _build_rack_data(cfg, site_id=None, location_id=None):
     return list(_build_rack_index(cfg, site_id, location_id).values())
@@ -232,9 +259,15 @@ def _calc_length(src, dst, rack_index, cfg):
     # Same rack — cable runs inside rack only
     if src["rack_id"] and dst["rack_id"] and src["rack_id"] == dst["rack_id"]:
         vert = abs((float(src["ru"]) - 1) * U_HEIGHT - (float(dst["ru"]) - 1) * U_HEIGHT)
-        src_pe = port_depth if src["face"] == "front" else rack_depth
-        dst_pe = port_depth if dst["face"] == "front" else rack_depth
-        raw_in = vert + src_pe + dst_pe
+        # Port depth: if both same face (both front or both rear), just port extensions
+        # If different faces (front to rear), must traverse rack depth
+        if src["face"] == dst["face"]:
+            # Both front or both rear - minimal depth
+            depth_component = port_depth + port_depth
+        else:
+            # One front, one rear - traverse rack
+            depth_component = rack_depth + port_depth + port_depth
+        raw_in = vert + depth_component
         raw_ft = raw_in / 12
         iface_key  = src.get("iface_type", "")
         cable_type = src.get("cable_type", "")
@@ -263,12 +296,12 @@ def _calc_length(src, dst, rack_index, cfg):
     if src["face"] == "front":
         src_pe = port_depth;  src_v = ru_from_top(src["ru"], src_rack_u) + overhead
     else:
-        src_pe = rack_depth;  src_v = (float(src["ru"]) - 1) * U_HEIGHT + src_rack_u * U_HEIGHT + overhead
+        src_pe = port_depth;  src_v = (float(src["ru"]) - 1) * U_HEIGHT + src_rack_u * U_HEIGHT + overhead
 
     if dst["face"] == "front":
         dst_pe = port_depth;  dst_v = ru_from_top(dst["ru"], dst_rack_u) + overhead
     else:
-        dst_pe = rack_depth;  dst_v = dst_rack_u * U_HEIGHT + (float(dst["ru"]) - 1) * U_HEIGHT + overhead
+        dst_pe = port_depth;  dst_v = dst_rack_u * U_HEIGHT + (float(dst["ru"]) - 1) * U_HEIGHT + overhead
 
     horiz = abs(float(dst_rack.get("center_offset", 0)) - float(src_rack.get("center_offset", 0)))
     cross_aisle  = src_rack.get("row") != dst_rack.get("row")
