@@ -79,3 +79,15 @@ The plugin supports the following settings in `PLUGINS_CONFIG`:
 ## License
 
 MIT License - see LICENSE file
+
+## Performance Features
+
+### BOM Caching
+
+Cable calculations are automatically cached per site/location to improve performance:
+- First BOM generation calculates and caches results
+- Subsequent requests load instantly from cache
+- Use the "Recalculate" button or add `?recalculate=true` to force refresh
+- Cache invalidates when you update rack positions or cable configurations
+
+Cache files are stored in: `layouts/site_{id}_bom_cache.json`

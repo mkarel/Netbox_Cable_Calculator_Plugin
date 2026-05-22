@@ -24,6 +24,30 @@
     site_id:     {{ selected_site_id|default:"null" }},
     location_id: {{ selected_location_id|default:"null" }},
   };
+
+function recalculateBOM() {
+  const siteId = document.getElementById('site_id').value;
+  const locationId = document.getElementById('location_id').value;
+  if (!siteId) {
+    alert('Please select a site first');
+    return;
+  }
+  let url = '/plugins/cable-calc/bom/?site_id=' + siteId + '&recalculate=true';
+  if (locationId) url += '&location_id=' + locationId;
+  window.location.href = url;
+}
 </script>
-<script src="{% static 'netbox_cable_calc/calculator.bundle.js' %}?v=2"></script>
+<script src="{% static 'netbox_cable_calc/calculator.bundle.js' %}?v=2">
+function recalculateBOM() {
+  const siteId = document.getElementById('site_id').value;
+  const locationId = document.getElementById('location_id').value;
+  if (!siteId) {
+    alert('Please select a site first');
+    return;
+  }
+  let url = '/plugins/cable-calc/bom/?site_id=' + siteId + '&recalculate=true';
+  if (locationId) url += '&location_id=' + locationId;
+  window.location.href = url;
+}
+</script>
 {% endblock %}

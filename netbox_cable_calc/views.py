@@ -434,6 +434,14 @@ def _build_cable_bom(cfg, site_id=None, location_id=None):
 
 # ── layout persistence ────────────────────────────────────────────────────────
 
+
+def _bom_cache_path(site_id, location_id=None):
+    os.makedirs(LAYOUT_DIR, exist_ok=True)
+    key = f"site_{site_id}"
+    if location_id:
+        key += f"_loc_{location_id}"
+    return os.path.join(LAYOUT_DIR, f"{key}_bom_cache.json")
+
 def _layout_path(site_id, location_id=None):
     os.makedirs(LAYOUT_DIR, exist_ok=True)
     key = f"site_{site_id}"
@@ -532,13 +540,49 @@ class BomApiView(LoginRequiredMixin, View):
             "copper_overhead", "copper_bridge_length",
             "aisle_width", "rack_depth", "port_depth", "default_slack_pct",
         ]}
+        
         site_id     = request.GET.get("site_id") or None
         location_id = request.GET.get("location_id") or None
+        recalculate = request.GET.get("recalculate") == "true"
+        
         if site_id:     site_id     = int(site_id)
         if location_id: location_id = int(location_id)
+        
+        # Check cache unless recalculate requested
+        if not recalculate and site_id:
+            cache_path = _bom_cache_path(site_id, location_id)
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, 'r') as f:
+                        cached = json.load(f)
+                    return JsonResponse({
+                        "cables": cached.get("cables", []),
+                        "count": cached.get("count", 0),
+                        "cached": True,
+                        "cache_time": cached.get("timestamp")
+                    })
+                except Exception as e:
+                    pass  # Fall through to recalculation
+        
+        # Calculate BOM
         rows = _build_cable_bom(cfg, site_id, location_id)
-        return JsonResponse({"cables": rows, "count": len(rows)})
-
+        
+        # Save to cache
+        if site_id:
+            cache_path = _bom_cache_path(site_id, location_id)
+            try:
+                import datetime
+                cache_data = {
+                    "cables": rows,
+                    "count": len(rows),
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                with open(cache_path, 'w') as f:
+                    json.dump(cache_data, f, cls=_Encoder)
+            except Exception as e:
+                pass  # Don't fail if cache write fails
+        
+        return JsonResponse({"cables": rows, "count": len(rows), "cached": False})
     def post(self, request):
         from dcim.models import Cable
         try:
