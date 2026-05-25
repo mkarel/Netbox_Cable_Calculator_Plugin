@@ -289,7 +289,7 @@ def _calc_length(src, dst, rack_index, cfg):
             "media": media, "connector": connector,
             "cross_aisle": False, "fixed": slack_mult == 0,
             "same_rack": True,
-            "breakdown": {"in_rack_vertical": round(vert, 2), "port_depth": round(src_pe + dst_pe, 2)},
+            "breakdown": {"in_rack_vertical": round(vert, 2), "port_depth": round(depth_component, 2)},
         }
 
     # Different racks — route via overhead tray
@@ -458,6 +458,18 @@ class CalculatorView(LoginRequiredMixin, View):
     def get(self, request):
         from django.conf import settings
         plugin_cfg = settings.PLUGINS_CONFIG.get("netbox_cable_calc", {})
+        
+        # Handle recalculate request by deleting cache
+        site_id = request.GET.get("site_id")
+        location_id = request.GET.get("location_id")
+        if request.GET.get("recalculate") == "true" and site_id:
+            try:
+                cache_path = _bom_cache_path(int(site_id), int(location_id) if location_id else None)
+                if os.path.exists(cache_path):
+                    os.remove(cache_path)
+            except Exception:
+                pass  # Ignore errors
+        
         cfg = {k: plugin_cfg.get(k) for k in [
             "outer_width_field", "outer_width_unit", "rack_spacing_default",
             "fiber_overhead", "fiber_bridge_length",
